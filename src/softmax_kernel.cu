@@ -32,6 +32,7 @@ attn_mask: [batch_size, to_len], padding tokens are -inf,
   attn_mask=nullptr and mask_future=ture for dec-self-attn training
   attn_mask=nullptr and mask_future=false for dec-self-attn infer
 */
+// why are from_len and to_len different here? Isn't the input NxN where n is seq_len
 template <typename T, int block_dim, int ele_per_thread>
 __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
                                       int to_len, bool mask_future) {
@@ -48,17 +49,30 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
       BlockStore;
   __shared__ typename BlockStore::TempStorage ts_store;
 
+  // local to each and every block
   T mval[ele_per_thread];
   if (attn_mask) {
+    // think this means that every blockIdx.y gets a different part of the 
+    // attention mask to read
     attn_mask += batch_id * to_len;
+    // loading a part of the attn mask to mval i think
+    // assign REDUCE_FLOAT_INF_NEG to Out of bound vals
+    // how do all threads load data in parallel if they all use the same ts_load??
     BlockLoad(ts_load).Load(attn_mask, mval, to_len, REDUCE_FLOAT_INF_NEG);
   }
 
+  // flattens the input to a scalar
   inp += flat_3dim(batch_id, head_id, 0, nhead, from_len * to_len);
   for (int token_id = blockIdx.x * token_per_reduce; token_id < from_len;
        token_id += gridDim.x * token_per_reduce) {
+    // read values into inp_val array
     T inp_val[token_per_reduce][ele_per_thread];
     for (int i = 0; i < token_per_reduce && (token_id + i) < from_len; i++) {
+      // is this an element by element load according to blockidx?
+      // so we can load a row of tokens this way, but how does it work if all the threads
+      // are loading the same data in parallel here? does each thread have its own copy of
+      // the data then?
+      // In blockload, each thread is loading num_elems_per_thread values and there are blockDim.x threads which load data at once
       BlockLoad(ts_load).Load(inp + (token_id + i) * to_len, inp_val[i], to_len,
                               REDUCE_FLOAT_INF_NEG);
     }
@@ -73,6 +87,7 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
       l_max[i] = REDUCE_FLOAT_INF_NEG;
       for (int j = 0; j < ele_per_thread; j++) {
         float temp_val;
+        // seems like we force the future values to be -inf when the mask_future flag is on here
         if (mask_future && ele_per_thread * threadIdx.x + j > token_id + i) {
           temp_val = REDUCE_FLOAT_INF_NEG;
         } else {
@@ -87,6 +102,7 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
     }
     // END ASSIGN3_1
     // warp reduce max
+    // seems like this if finding the max among <= 32 tokens
     warpReduce<ReduceType::kMax, token_per_reduce>(l_max);
 
     /* step 2. compute sum */
@@ -114,6 +130,7 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
       for (int j = 0; j < ele_per_thread; j++) {
         inp_val[i][j] = (T)(val[i][j] * l_sum[i]);
       }
+      // in place softmax so we write results here
       BlockStore(ts_store).Store(inp + (token_id + i) * to_len, inp_val[i],
                                  to_len);
     }
@@ -156,7 +173,9 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 1. compute max */
     // thread local max
     // BEGIN ASSIGN3_1
-    
+    int l_sum[1];
+    int l_max[1]; 
+
     // END ASSIGN3_1
     // block reduce max
     blockReduce<ReduceType::kMax, token_per_reduce>(l_max);
@@ -172,7 +191,6 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 2. compute sum */
     // thread local sum
     // BEGIN ASSIGN3_1
-    
     // END ASSIGN3_1
     // block reduce sum
     blockReduce<ReduceType::kSum, token_per_reduce>(l_sum);

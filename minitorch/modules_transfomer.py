@@ -115,6 +115,10 @@ class MultiHeadAttention(Module):
         if self.causal:
             result = result+ mask
         # result = result - max(result,dim=3)
+        # q@kT gives me scores for the affinity of each token with the others
+        # b x heads x seq_len x seq_len
+        # for each token we want to find the one with highest affinity using masked softmax
+        # returns 0-1 prob for each value in the input
         result = softmax(result,dim=3)
         result = result @ v
         # result shape b x num_heads x seq_len x attn_hidden_dim
