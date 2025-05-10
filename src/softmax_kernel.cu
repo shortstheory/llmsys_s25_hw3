@@ -374,14 +374,55 @@ void launch_attn_softmax_bw(float *out_grad,
   dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
   dim3 block_dim(WARP_SIZE, warps_per_block);
   // BEGIN ASSIGN3_1
-  
+  float input_size = rows*softmax_len;
+  float *out_grad_gpu, *soft_inp_gpu;
+  cudaMalloc(&out_grad_gpu, input_size);
+  cudaMalloc(&soft_inp_gpu, input_size);
+
+  cudaMemcpy(out_grad_gpu, out_grad, input_size,  cudaMemcpyHostToDevice);
+  cudaMemcpy(soft_inp_gpu, soft_inp, input_size,  cudaMemcpyHostToDevice);
   
   // Launch kernel
   // Hint: use ker_attn_softmax_bw<float, ITERATIONS> depending on softmax_len
-  
+  if (softmax_len <= 32) {
+    ker_attn_softmax_bw<float,  1><<<grid_dim, block_dim, 0, stream>>>(
+        out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else if (softmax_len <= 64) {
+    ker_attn_softmax_bw<float,  2><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else if (softmax_len <= 128) {
+    ker_attn_softmax_bw<float,  4><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else if (softmax_len <= 256) {
+    ker_attn_softmax_bw<float,  8><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else if (softmax_len <= 512) {
+    ker_attn_softmax_bw<float,  16><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else if (softmax_len <= 1024) {
+    ker_attn_softmax_bw<float,  32><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  }else if (softmax_len <= 2048) {
+    ker_attn_softmax_bw<float,  64><<<grid_dim, block_dim, 0, stream>>>(
+      out_grad_gpu, soft_inp_gpu, softmax_len);
+  } else {
+    throw std::runtime_error(
+        "Sequence length greater than 2048 is currently not supported");
+  }
+
   // Copy back to the host
+  cudaMemcpy(out_grad, out_grad_gpu, input_size, cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
   
-  
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "launch_attn_softmax Error: %s\n", cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+  }
+
+  // Free memory on device
+  cudaFree(out_grad_gpu);
+  cudaFree(soft_inp_gpu);
 
   // Free memory on device
   // END ASSIGN3_1
