@@ -81,6 +81,8 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
     // thread local max
     // Hint: use fmaxf() to compute max
     // BEGIN ASSIGN3_1
+    // val[tok][ele] is a buffer for storing the elements under consideration for each thread; later used
+    // in the exp and subtracting the max value of each row of tokens
     float val[token_per_reduce][ele_per_thread];
     float l_max[token_per_reduce];
     for (int i = 0; i < token_per_reduce; i++) {
@@ -173,8 +175,25 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 1. compute max */
     // thread local max
     // BEGIN ASSIGN3_1
-    int l_sum[1];
-    int l_max[1]; 
+    float val[token_per_reduce][ele_per_thread];
+    float l_max[token_per_reduce];
+    for (int i = 0; i < token_per_reduce; i++) {
+      l_max[i] = REDUCE_FLOAT_INF_NEG;
+      for (int j = 0; j < ele_per_thread; j++) {
+        float temp_val;
+        // seems like we force the future values to be -inf when the mask_future flag is on here
+        if (mask_future && ele_per_thread * threadIdx.x + j > token_id + i) {
+          temp_val = REDUCE_FLOAT_INF_NEG;
+        } else {
+          temp_val = (float)inp_val[i][j];
+          if (attn_mask) {
+            temp_val += (float)mval[j];
+          }
+        }
+        val[i][j] = temp_val;
+        l_max[i] = fmaxf(l_max[i], temp_val);
+      }
+    }
 
     // END ASSIGN3_1
     // block reduce max
@@ -191,6 +210,15 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 2. compute sum */
     // thread local sum
     // BEGIN ASSIGN3_1
+    float l_sum[token_per_reduce];
+    for (int i = 0; i < token_per_reduce; i++) {
+      l_sum[i] = 0.f;
+      for (int j = 0; j < ele_per_thread; j++) {
+        val[i][j] = __expf(val[i][j] - s_max[i]);
+        l_sum[i] += val[i][j];
+      }
+    }
+
     // END ASSIGN3_1
     // block reduce sum
     blockReduce<ReduceType::kSum, token_per_reduce>(l_sum);
@@ -205,7 +233,15 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
 
     /* step 3. compute final result */
     // BEGIN ASSIGN3_1
-   
+    for (int i = 0; i < token_per_reduce && (token_id + i) < from_len; i++) {
+      for (int j = 0; j < ele_per_thread; j++) {
+        inp_val[i][j] = (T)(val[i][j] * s_sum[i]);
+      }
+      // in place softmax so we write results here
+      BlockStore(ts_store).Store(inp + (token_id + i) * to_len, inp_val[i],
+                                 to_len);
+    }
+
     // END ASSIGN3_1
   }  // blockIdx.x
 }
