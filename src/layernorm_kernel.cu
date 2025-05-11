@@ -46,17 +46,47 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   
   // Step 1
   float l_sum = 0;
-  const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
+  float l2_sum = 0;
+  // const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
-    float4 val = inp_f4[idx];
-    l_sum += val.x + val.y + val.z + val.w;
+    // float4 val = inp_f4[idx];
+    // float4 == 4 x float32 not fp4!
+    // l_sum += val.x + val.y + val.z + val.w;
+    float tmp = inp[idx];
+    l_sum += tmp;
+    l2_sum += tmp*tmp;
   }
-
+  // each thread loading 4 values here, so should it be hidden_size/4?
   // Step 2
+  blockReduce<ReduceType::kSum, 1>(&l_sum);
+  blockReduce<ReduceType::kSum, 1>(&l2_sum);
+  __shared__ float s_var;
+  __shared__ float s_mean;
+  if (threadIdx.x == 0)
+  {
+    s_mean = l_sum / hidden_size;
+    float l2_sum_mean = l2_sum / hidden_size;
+    s_var = l2_sum_mean - s_mean * s_mean + LN_EPSILON;
+    s_var = sqrt(s_var);
+    if (means != nullptr)
+    {
+      means[gridDim.x] = s_mean;
+    }
+    if (vars != nullptr)
+    {
+      vars[gridDim.x] = s_var;
+    }
+  }
+  __syncthreads();
 
   // Step 3
-  
-  assert(false && "Not Implemented");
+  for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    float bias_ = bias[threadIdx.x];
+    float scale_ = scale[threadIdx.x];
+    float res = scale_*(inp[idx] - s_mean)/s_var + bias_;
+    ln_res[idx] = res;
+  }
+
   /// END ASSIGN3_2
 }
 
@@ -90,7 +120,7 @@ void launch_layernorm(float *ln_res, float *vars, float *means,
   cudaMemcpy(d_bias, bias, bias_size, cudaMemcpyHostToDevice);
 
   // For using float4
-  hidden_dim >>= 2;
+  // hidden_dim >>= 2;
   int nthread = min(((hidden_dim + 31) / 32) * 32, MAX_THREADS);
   dim3 grid_dim(batch_size);
   dim3 block_dim(nthread);
