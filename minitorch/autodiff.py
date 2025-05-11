@@ -136,6 +136,8 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     topo_sort = topological_sort(variable)
     intermediate_grads = {}
     intermediate_grads[variable.unique_id] = deriv
+    # for v in topo_sort:
+    #     intermediate_grads[variable.unique_id] = 
     for v in topo_sort:
         if v.is_leaf():
             if v.unique_id in intermediate_grads:

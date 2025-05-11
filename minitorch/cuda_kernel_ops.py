@@ -406,11 +406,10 @@ class CudaKernelOps(TensorOps):
     @staticmethod
     def attn_softmax_bw(out_grad: Tensor, soft_inp: Tensor):
       #   BEGIN ASSIGN3_1
-      batch_size, nhead, from_len, to_len = soft_inp.shape
-      soft_inp = soft_inp.view(batch_size*nhead*from_len, to_len)
-      rows, softmax_len = soft_inp.shape
+      batch_size, nhead, from_len, to_len = out_grad.shape
+      rows = batch_size*nhead*from_len
       stream = torch.cuda.current_stream().cuda_stream
-
+      out_grad = out_grad.contiguous()
       lib_softmax.launch_attn_softmax_bw.argtypes = [
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
@@ -424,10 +423,9 @@ class CudaKernelOps(TensorOps):
         out_grad._tensor._storage,
         soft_inp._tensor._storage,
         rows,
-        softmax_len,
+        to_len,
         stream
       ) 
-      out_grad = out_grad.view(batch_size, nhead, from_len, to_len)
       return out_grad
       #   END ASSIGN3_1
 

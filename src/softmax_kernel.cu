@@ -374,7 +374,7 @@ void launch_attn_softmax_bw(float *out_grad,
   dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
   dim3 block_dim(WARP_SIZE, warps_per_block);
   // BEGIN ASSIGN3_1
-  float input_size = rows*softmax_len;
+  float input_size = rows*softmax_len*sizeof(float);
   float *out_grad_gpu, *soft_inp_gpu;
   cudaMalloc(&out_grad_gpu, input_size);
   cudaMalloc(&soft_inp_gpu, input_size);
