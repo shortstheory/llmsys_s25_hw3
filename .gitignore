@@ -1,0 +1,8 @@
+*.pyc
+*.sqlite
+*.nsys-rep
+.hypothesis/
+.pytest_cache/
+__pycache__/
+*.so
+.DS_Store

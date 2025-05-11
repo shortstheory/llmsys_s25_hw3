@@ -37,7 +37,8 @@ def wrap_tuple(x):  # type: ignore
 class Function:
     @classmethod
     def _backward(cls, ctx: Context, grad_out: Tensor) -> Tuple[Tensor, ...]:
-        return wrap_tuple(cls.backward(ctx, grad_out))  # type: ignore
+        res = wrap_tuple(cls.backward(ctx, grad_out))  # type: ignore
+        return res
 
     @classmethod
     def _forward(cls, ctx: Context, *inps: Tensor) -> Tensor:
@@ -425,10 +426,11 @@ class Attn_Softmax(Function):
       #   END ASSIGN3_1
 
     @staticmethod
-    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+    def backward(ctx: Context, out_grad: Tensor) -> Tuple[Tensor,Tensor]:
       #   BEGIN ASSIGN3_1 
       res = ctx.saved_values[0]
-      return out_grad.f.attn_softmax_bw(out_grad, res)
+      return (out_grad.f.attn_softmax_bw(out_grad, res),
+        zeros(out_grad.shape))
       #   END ASSIGN3_1
 
 
