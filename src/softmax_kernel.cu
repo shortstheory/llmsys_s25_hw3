@@ -330,12 +330,18 @@ output: [batch_size, nhead, seq_len, seq_len], output of softmax forward.
 */
 template <typename T, int ITERATIONS>
 __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
+  // nothing to see here, just basically reshaping the matrix
+  // from BxHxNxN to BxHxN
   int batch_idx = blockIdx.x * blockDim.y + threadIdx.y;
+  // stride over rows so each thread gets a different element of the sequence
   int offset = batch_idx * softmax_length + threadIdx.x;
 
+  // seems like a sneaky way of changing the starting position of each thread
   grad += offset;
   inp += offset;
 
+  // if softmax_len > thread size, then we would like each thread to do softmax_len/WARP_SIZE
+  // elements instead
   T grad_reg[ITERATIONS];
   T inp_reg[ITERATIONS];
   float sum = 0.0;
@@ -343,22 +349,34 @@ __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
   #pragma unroll
   for (int i = 0; i < ITERATIONS; ++i) {
     int curr_idx = threadIdx.x + i * WARP_SIZE;
+    // mask out threads which have an index > softmax_length
     if (curr_idx < softmax_length) {
+      // maybe possible to still use blockload over here?
+      // actually no it wont work as blockload does strided accesses and not
+      // with a gap of 32
+      // here it's needed because we're breaking down the softmax_len into groups of 32
       grad_reg[i] = grad[i * WARP_SIZE];
       inp_reg[i] = inp[i * WARP_SIZE];
       sum += (float)grad_reg[i] * (float)inp_reg[i];
     }
   }
 
+  // is this a more general form of warpReduce? Warp reduce seems to require 
+  // explicit templates for each different size, i wonder why it's not unrolled
   cg::thread_block b = cg::this_thread_block();
   cg::thread_block_tile<WARP_SIZE> g = cg::tiled_partition<WARP_SIZE>(b);
-
-  for (int i = 1; i < WARP_SIZE; i <<= 1) sum += g.shfl_xor(sum, i);
+  #pragma unroll
+  for (int i = 1; i < WARP_SIZE; i <<= 1) {
+    // this uses shfl_xor instead of _shfl xor sync but it seems to be some thread block sort of thing going on here
+    // sum is 0.0 for threads which are out of softmax_len
+    sum += g.shfl_xor(sum, i);
+  }
 
   #pragma unroll
   for (int i = 0; i < ITERATIONS; ++i) {
     int curr_idx = threadIdx.x + i * WARP_SIZE;
     if (curr_idx < softmax_length)
+    // basically kronecker delta going on here
       grad[i * WARP_SIZE] = (T)((float)inp_reg[i] * ((float)grad_reg[i] - sum));
   }
 }
