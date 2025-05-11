@@ -409,7 +409,6 @@ class CudaKernelOps(TensorOps):
       batch_size, nhead, from_len, to_len = out_grad.shape
       rows = batch_size*nhead*from_len
       stream = torch.cuda.current_stream().cuda_stream
-      out_grad = out_grad.contiguous()
       lib_softmax.launch_attn_softmax_bw.argtypes = [
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
