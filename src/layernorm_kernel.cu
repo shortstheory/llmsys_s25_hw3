@@ -47,17 +47,15 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   // Step 1
   float l_sum = 0;
   float l2_sum = 0;
-  // const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
   int offset = blockIdx.x * hidden_size; 
-  inp = inp + offset;
-  ln_res = ln_res + offset;
+  const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + offset;  
+  float4 *ln_resf4= reinterpret_cast< float4 *>(ln_res) + offset;  
+
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
-    // float4 val = inp_f4[idx];
+    float4 val = inp_f4[idx];
     // float4 == 4 x float32 not fp4!
-    // l_sum += val.x + val.y + val.z + val.w;
-    float tmp = inp[idx];
-    l_sum += tmp;
-    l2_sum += tmp*tmp;
+    l_sum += val.x + val.y + val.z + val.w;
+    l2_sum += val.x*val.x + val.y*val.y + val.z*val.z + val.w*val.w;
   }
   // each thread loading 4 values here, so should it be hidden_size/4?
   // Step 2
@@ -67,10 +65,10 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   __shared__ float s_mean;
   if (threadIdx.x == 0)
   {
-    s_mean = l_sum / hidden_size;
-    float l2_sum_mean = l2_sum / hidden_size;
+    int real_hidden_dim = 4*hidden_size;
+    s_mean = l_sum / real_hidden_dim;
+    float l2_sum_mean = l2_sum / real_hidden_dim;
     s_var = l2_sum_mean - s_mean * s_mean + LN_EPSILON;
-    s_var = sqrt(s_var);
     if (means != nullptr)
     {
       means[blockIdx.x] = s_mean;
@@ -79,15 +77,23 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
     {
       vars[blockIdx.x] = s_var;
     }
+    s_var = sqrt(s_var);
   }
   __syncthreads();
 
   // Step 3
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
-    float bias_ = bias[threadIdx.x];
-    float scale_ = scale[threadIdx.x];
-    float res = scale_*(inp[idx] - s_mean)/s_var + bias_;
-    ln_res[idx] = res;
+    float4 bias_ =  *(reinterpret_cast<const float4 *>(bias)+idx);
+    float4 scale_ = *(reinterpret_cast<const float4 *>(scale)+idx);
+    float4 input_ = inp_f4[idx];
+    float4 res;
+    res.x = scale_.x*(input_.x - s_mean)/s_var + bias_.x;
+    res.y = scale_.y*(input_.y - s_mean)/s_var + bias_.y;
+    res.z = scale_.z*(input_.z - s_mean)/s_var + bias_.z;
+    res.w = scale_.w*(input_.w - s_mean)/s_var + bias_.w;
+
+
+    ln_resf4[idx] = res;
   }
 
   /// END ASSIGN3_2
@@ -123,7 +129,7 @@ void launch_layernorm(float *ln_res, float *vars, float *means,
   cudaMemcpy(d_bias, bias, bias_size, cudaMemcpyHostToDevice);
 
   // For using float4
-  // hidden_dim >>= 2;
+  hidden_dim >>= 2;
   int nthread = min(((hidden_dim + 31) / 32) * 32, MAX_THREADS);
   dim3 grid_dim(batch_size);
   dim3 block_dim(nthread);
@@ -266,7 +272,53 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   // 4. Compute final gradient
   
   // Step 1
- 
+  int offset = blockIdx.x * blockDim.x;
+  const int batch_num = blockIdx.x;
+  bool inverse = false;
+
+  const float4* inp4_ptr = reinterpret_cast<float4*>(inp)+offset;
+  const float4* gamma4_ptr = reinterpret_cast<float4*>(gamma)+offset;
+
+  __shared__ float ssubtract;
+  __shared__ float smult;
+
+  if (theadIdx.x == 0)
+  {
+    if (means)
+    {
+      ssubtract = means[batch_num];
+      smult = sqrt(vars[batch_num]);
+    } 
+    else
+    {
+      ssubtract = betta[batch_num];
+      smult = 1.0/gamma[batch_num];
+    }
+  }
+  __syncthreads();
+
+  if (threadIdx.x == 0)
+  {
+    smean = subtract_ptr
+  }
+
+  assert(hidden_dim == blockDim.x);
+
+  float4 input4;
+  input4 = inp4_ptr[threadIdx.x];
+  float4 gamma4;
+  gamma4 = gamma4_ptr[threadIdx.x];
+  float4 xhat;
+  xhat.x = (input4.x - ssubtract)*smult;
+  xhat.y = (input4.y - ssubtract)*smult;
+  xhat.z = (input4.z - ssubtract)*smult;
+  xhat.w = (input4.w - ssubtract)*smult;
+
+  float4 dxhat;
+  dxhat.x = xhat.x*gamma4.x;
+  dxhat.y = xhat.y*gamma4.y;
+  dxhat.z = xhat.z*gamma4.z;
+  dxhat.w = xhat.w*gamma4.w;
   // Step 2
    
   // Step 3
