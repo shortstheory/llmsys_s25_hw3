@@ -143,7 +143,11 @@ class PowerScalar(Function):
                 Tensor containing the result of raising every element of a to scalar.
         """
         # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = a.f.pow_scalar_zip(a, scalar)
+        ctx.save_for_backward(a, scalar)
+        return out
+        ### END YOUR SOLUTION
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
@@ -164,13 +168,17 @@ class PowerScalar(Function):
                 Tuple containing (gradient_for_a, 0.0)
                 gradient_for_a must be the correct gradient, but just return 0.0 for the gradient of scalar.
         """
+        ### BEGIN YOUR SOLUTION
+        
         a, scalar = ctx.saved_values
         grad_a    = None
         
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        grad_a = grad_output * (scalar * (a ** (scalar - 1)))
+        ### END YOUR SOLUTION
 
         return (grad_a, 0.0)
+        ### END YOUR SOLUTION
 
 
 class Tanh(Function):
@@ -191,8 +199,11 @@ class Tanh(Function):
             output : Tensor
                 Tensor containing the element-wise tanh of a.
         """
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = a.f.tanh_map(a)
+        ctx.save_for_backward(out)
+        return out
+        ### END YOUR SOLUTION
     
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
@@ -210,8 +221,10 @@ class Tanh(Function):
             output : Tensor
                 gradient_for_a must be the correct element-wise gradient for tanh.
         """
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = ctx.saved_values[0]
+        return grad_output * (-(out ** 2) + 1)
+        ### END YOUR SOLUTION
 
 
 class Sigmoid(Function):
@@ -439,7 +452,8 @@ class LayerNorm(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, gamma: Tensor, beta: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_2 
-      raise NotImplementedError("Need to implement for Assignment 3")
+      res = inp.f.layernorm_fw(inp,gamma,beta)
+      return res
       #   END ASSIGN3_2
 
     @staticmethod

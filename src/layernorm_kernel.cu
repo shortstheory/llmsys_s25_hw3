@@ -48,6 +48,9 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   float l_sum = 0;
   float l2_sum = 0;
   // const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
+  int offset = blockIdx.x * hidden_size; 
+  inp = inp + offset;
+  ln_res = ln_res + offset;
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
     // float4 val = inp_f4[idx];
     // float4 == 4 x float32 not fp4!
@@ -70,11 +73,11 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
     s_var = sqrt(s_var);
     if (means != nullptr)
     {
-      means[gridDim.x] = s_mean;
+      means[blockIdx.x] = s_mean;
     }
     if (vars != nullptr)
     {
-      vars[gridDim.x] = s_var;
+      vars[blockIdx.x] = s_var;
     }
   }
   __syncthreads();

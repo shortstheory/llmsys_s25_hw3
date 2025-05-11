@@ -44,6 +44,7 @@ def test_launch_layernorm():
       start_time = time.time()
       out_mt = inp_mt.layernorm(gamma_mt, beta_mt)
       end_time = time.time()
+      # print(out_mt)
       out = torch.tensor(out_mt._tensor._storage).cuda()
       return [out], end_time - start_time
     
@@ -62,7 +63,7 @@ def test_launch_layernorm():
       x = (x - mean) / ((variance + kt.epsilon) ** 0.5)
       x = gamma_mt * x + beta_mt
       end_time = time.time()
-
+      # print(x)
       base = torch.tensor(x._tensor._storage).cuda()
       return [
           base.contiguous(),
