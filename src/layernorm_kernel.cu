@@ -276,18 +276,21 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   const int batch_num = blockIdx.x;
   bool inverse = false;
 
-  const float4* inp4_ptr = reinterpret_cast<float4*>(inp)+offset;
-  const float4* gamma4_ptr = reinterpret_cast<float4*>(gamma)+offset;
+  const float4* inp4_ptr =      reinterpret_cast<const float4*>(inp)+offset;
+  const float4* gamma4_ptr =    reinterpret_cast<const float4*>(gamma)+offset;
+  const float4* out_grad4_ptr = reinterpret_cast<const float4*>(out_grad)+offset;
+  float4* inp_grad4_ptr =       reinterpret_cast<float4*>(inp_grad)+offset;
+
 
   __shared__ float ssubtract;
   __shared__ float smult;
 
-  if (theadIdx.x == 0)
+  if (threadIdx.x == 0)
   {
     if (means)
     {
       ssubtract = means[batch_num];
-      smult = sqrt(vars[batch_num]);
+      smult = rsqrt(vars[batch_num]);
     } 
     else
     {
@@ -297,36 +300,52 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   }
   __syncthreads();
 
-  if (threadIdx.x == 0)
-  {
-    smean = subtract_ptr
-  }
-
   assert(hidden_dim == blockDim.x);
 
-  float4 input4;
-  input4 = inp4_ptr[threadIdx.x];
-  float4 gamma4;
-  gamma4 = gamma4_ptr[threadIdx.x];
+  float4 input4 = inp4_ptr[threadIdx.x];
+  float4 gamma4 = gamma4_ptr[threadIdx.x];
   float4 xhat;
   xhat.x = (input4.x - ssubtract)*smult;
   xhat.y = (input4.y - ssubtract)*smult;
   xhat.z = (input4.z - ssubtract)*smult;
   xhat.w = (input4.w - ssubtract)*smult;
 
+  float4 out_grad4 = out_grad4_ptr[threadIdx.x];
+
   float4 dxhat;
-  dxhat.x = xhat.x*gamma4.x;
-  dxhat.y = xhat.y*gamma4.y;
-  dxhat.z = xhat.z*gamma4.z;
-  dxhat.w = xhat.w*gamma4.w;
+  dxhat.x = out_grad4.x*gamma4.x;
+  dxhat.y = out_grad4.y*gamma4.y;
+  dxhat.z = out_grad4.z*gamma4.z;
+  dxhat.w = out_grad4.w*gamma4.w;
+
+  float dxhat_sum = dxhat.x + dxhat.y + dxhat.z + dxhat.w;
+  float dxhat_xhat_sum = dxhat.x*xhat.x + dxhat.y*xhat.y + dxhat.z*xhat.z + dxhat.w*xhat.w;
+
   // Step 2
-   
+  blockReduce<ReduceType::kSum,1>(&dxhat_sum);
+  blockReduce<ReduceType::kSum,1>(&dxhat_xhat_sum);
+
+  __shared__ float sdxhat_sum;
+  __shared__ float sdxhat_xhat_sum;
+  __shared__ float svariance_inv;
+  if (threadIdx.x == 0)
+  {
+    sdxhat_sum = dxhat_sum;
+    sdxhat_xhat_sum = dxhat_xhat_sum;
+    svariance_inv = rsqrt(vars[batch_num]);
+  }
+  __syncthreads();
+ float4 res;
+  res.x = (dxhat.x - (sdxhat_sum + xhat.x*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
+  res.y = (dxhat.y - (sdxhat_sum + xhat.y*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
+  res.z = (dxhat.z - (sdxhat_sum + xhat.z*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
+  res.w = (dxhat.w - (sdxhat_sum + xhat.w*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
+
+  inp_grad4_ptr[threadIdx.x]=res;
   // Step 3
  
   // Step 4
-  
-  assert(false && "Not Implemented");
-  /// END ASSIGN3_2
+    /// END ASSIGN3_2
 }
 extern "C" {
 void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
