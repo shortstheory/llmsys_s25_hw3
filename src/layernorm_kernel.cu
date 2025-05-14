@@ -210,7 +210,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   //      -> Now g.shfl_down helps you do so without consuming any shared memory. g.shfl_down makes it more efficient.
   // 4. Assign the final result to the correct position in the global output
 
-  __shared__ float betta_buffer[TILE_DIM][TILE_DIM];
+  // __shared__ float betta_buffer[TILE_DIM][TILE_DIM];
   __shared__ float gamma_buffer[TILE_DIM][TILE_DIM];
 
   cg::thread_block b = cg::this_thread_block();
@@ -220,35 +220,30 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   size_t row = blockDim.y*blockIdx.x + threadIdx.y;
   if (row < rows)
   {
-    const float* out_grad_ptr = row*width + out_grad;
-    const float* betta_buffer_ptr = &betta_buffer[threadIdx.y][0];
+    const float* out_grad_ptr = out_grad + row*width;
+    // float* betta_buffer_ptr = &betta_buffer[threadIdx.y][0];
     float sum = 0.0;
     int lane_id = g.thread_rank();
 
     for (size_t i{}; i < width; i+=blockDim.x)
     {
-      betta_buffer_ptr[i+lane_id] = out_grad_ptr[i+lane_id];
-      for (int i = g.size()/2; i > 0; i/=2)
+      // betta_buffer_ptr[lane_id] = out_grad_ptr[i+lane_id];
+      float val = (lane_id + i < width) ? out_grad_ptr[lane_id+i] : 0.0;
+      for (int offset = g.size()/2; offset > 0; offset/=2)
       {
-        betta_buffer_ptr[i+lane_id] += g.shfl_down(betta_buffer_ptr[i+lane_id], 1);
+        val += g.shfl_down(val, offset);
       }
       // only the result for 0 matters
-      sum += betta_buffer_ptr[i+lane_id];
+      if (lane_id == 0)
+      {
+        sum += val;
+      }
     }
     if (lane_id == 0)
     {
       betta_grad[row] = sum;
     }
   }
-  // Step 1
-
-  // Step 2
-  
-  // Step 3
-  
-  // Step 4
-
-  /// END ASSIGN3_2
 }
 
 /**
