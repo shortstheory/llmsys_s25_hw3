@@ -216,6 +216,30 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   cg::thread_block b = cg::this_thread_block();
   cg::thread_block_tile<TILE_DIM> g = cg::tiled_partition<TILE_DIM>(b);
 
+  // we have enough blocks such that every row will get processed this way
+  size_t row = blockDim.y*blockIdx.x + threadIdx.y;
+  if (row < rows)
+  {
+    const float* out_grad_ptr = row*width + out_grad;
+    const float* betta_buffer_ptr = &betta_buffer[threadIdx.y][0];
+    float sum = 0.0;
+    int lane_id = g.thread_rank();
+
+    for (size_t i{}; i < width; i+=blockDim.x)
+    {
+      betta_buffer_ptr[i+lane_id] = out_grad_ptr[i+lane_id];
+      for (int i = g.size()/2; i > 0; i/=2)
+      {
+        betta_buffer_ptr[i+lane_id] += g.shfl_down(betta_buffer_ptr[i+lane_id], 1);
+      }
+      // only the result for 0 matters
+      sum += betta_buffer_ptr[i+lane_id];
+    }
+    if (lane_id == 0)
+    {
+      betta_grad[row] = sum;
+    }
+  }
   // Step 1
 
   // Step 2
@@ -224,7 +248,6 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   
   // Step 4
 
-  assert(false && "Not Implemented");
   /// END ASSIGN3_2
 }
 
