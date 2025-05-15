@@ -313,45 +313,41 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   // 4. Compute final gradient
   
   // Step 1
-  int offset = blockIdx.x * blockDim.x;
-  const int batch_num = blockIdx.x;
-  bool inverse = false;
+  // Step 1
+  int offset = blockIdx.x * hidden_dim;
+  const int row = blockIdx.x;
+  const int col = threadIdx.x;
 
   const float4* inp4_ptr =      reinterpret_cast<const float4*>(inp)+offset;
-  const float4* gamma4_ptr =    reinterpret_cast<const float4*>(gamma)+offset;
+  const float4* gamma4_ptr =    reinterpret_cast<const float4*>(gamma);
+  const float4* betta4_ptr =    reinterpret_cast<const float4*>(betta);
   const float4* out_grad4_ptr = reinterpret_cast<const float4*>(out_grad)+offset;
   float4* inp_grad4_ptr =       reinterpret_cast<float4*>(inp_grad)+offset;
+  
 
-
-  __shared__ float ssubtract;
-  __shared__ float smult;
-
-  if (threadIdx.x == 0)
-  {
-    if (means)
-    {
-      ssubtract = means[batch_num];
-      smult = rsqrt(vars[batch_num]);
-    } 
-    else
-    {
-      ssubtract = betta[batch_num];
-      smult = 1.0/gamma[batch_num];
-    }
-  }
-  __syncthreads();
-
-  assert(hidden_dim == blockDim.x);
-
-  float4 input4 = inp4_ptr[threadIdx.x];
-  float4 gamma4 = gamma4_ptr[threadIdx.x];
+  float4 input_or_output4 = inp4_ptr[col];
+  float4 gamma4 = gamma4_ptr[col];
   float4 xhat;
-  xhat.x = (input4.x - ssubtract)*smult;
-  xhat.y = (input4.y - ssubtract)*smult;
-  xhat.z = (input4.z - ssubtract)*smult;
-  xhat.w = (input4.w - ssubtract)*smult;
 
-  float4 out_grad4 = out_grad4_ptr[threadIdx.x];
+  if (means)
+  {
+    float mean = means[row];
+    float var_rsqrt = rsqrt(vars[row]);
+    xhat.x = (input_or_output4.x - mean)*var_rsqrt;
+    xhat.y = (input_or_output4.y - mean)*var_rsqrt;
+    xhat.z = (input_or_output4.z - mean)*var_rsqrt;
+    xhat.w = (input_or_output4.w - mean)*var_rsqrt;
+  } else if (betta4_ptr)
+  {
+    float4 betta4 = betta4_ptr[col];
+    float4 gamma4 = gamma4_ptr[col];
+    xhat.x = (input_or_output4.x - betta4.x)/gamma4.x;
+    xhat.y = (input_or_output4.y - betta4.y)/gamma4.y;
+    xhat.z = (input_or_output4.z - betta4.z)/gamma4.z;
+    xhat.w = (input_or_output4.w - betta4.w)/gamma4.w;
+  }
+
+  float4 out_grad4 = out_grad4_ptr[col];
 
   float4 dxhat;
   dxhat.x = out_grad4.x*gamma4.x;
@@ -373,7 +369,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   {
     sdxhat_sum = dxhat_sum;
     sdxhat_xhat_sum = dxhat_xhat_sum;
-    svariance_inv = rsqrt(vars[batch_num]);
+    svariance_inv = rsqrt(vars[row]);
   }
   __syncthreads();
  float4 res;
@@ -382,11 +378,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   res.z = (dxhat.z - (sdxhat_sum + xhat.z*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
   res.w = (dxhat.w - (sdxhat_sum + xhat.w*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
 
-  inp_grad4_ptr[threadIdx.x]=res;
-  // Step 3
- 
-  // Step 4
-    /// END ASSIGN3_2
+  inp_grad4_ptr[col]=res;
 }
 extern "C" {
 void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
