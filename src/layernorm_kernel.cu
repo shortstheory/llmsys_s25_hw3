@@ -211,39 +211,62 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   // 4. Assign the final result to the correct position in the global output
 
   // __shared__ float betta_buffer[TILE_DIM][TILE_DIM];
-  __shared__ float gamma_buffer[TILE_DIM][TILE_DIM];
+  __shared__ T gamma_buffer[TILE_DIM][TILE_DIM];
+  __shared__ T betta_buffer[TILE_DIM][TILE_DIM];
 
   cg::thread_block b = cg::this_thread_block();
   cg::thread_block_tile<TILE_DIM> g = cg::tiled_partition<TILE_DIM>(b);
+  
+  int col = blockDim.x * blockIdx.x + threadIdx.x;
 
-  // we have enough blocks such that every row will get processed this way
-  size_t row = blockDim.y*blockIdx.x + threadIdx.y;
-  if (row < rows)
+  T thread_grad_sum=0.0;
+  T thread_grad_xhat_product_sum = 0.0;
+  const bool use_gamma_beta = gamma&&betta;
+  const bool use_mean_var = means && vars;
+
+  if (col < width)
   {
-    const float* out_grad_ptr = out_grad + row*width;
-    // float* betta_buffer_ptr = &betta_buffer[threadIdx.y][0];
-    float sum = 0.0;
-    int lane_id = g.thread_rank();
-
-    for (size_t i{}; i < width; i+=blockDim.x)
+    for (int i = 0; i < rows; i+=blockDim.y)
     {
-      // betta_buffer_ptr[lane_id] = out_grad_ptr[i+lane_id];
-      float val = (lane_id + i < width) ? out_grad_ptr[lane_id+i] : 0.0;
-      for (int offset = g.size()/2; offset > 0; offset/=2)
+      int row = i + threadIdx.y;
+      int idx = row*width + col;  
+      T grad = out_grad[idx];
+      T xhat = 0.0;
+      const T input_or_output = inp[idx];
+      if (use_gamma_beta)
       {
-        val += g.shfl_down(val, offset);
-      }
-      // only the result for 0 matters
-      if (lane_id == 0)
+        const T gamma_val = gamma[col];
+        const T beta_val = betta[col];
+        xhat = (input_or_output-beta_val)/gamma_val;
+      } else if (use_mean_var)
       {
-        sum += val;
+        const T mean = means[row];
+        const T var = vars[row];
+        xhat = (input_or_output-mean)/var;
       }
-    }
-    if (lane_id == 0)
-    {
-      betta_grad[row] = sum;
+      thread_grad_sum += grad;
+      thread_grad_xhat_product_sum += grad*xhat;
     }
   }
+
+  betta_buffer[threadIdx.x][threadIdx.y] = thread_grad_sum;
+  gamma_buffer[threadIdx.x][threadIdx.y] = thread_grad_xhat_product_sum;
+  __syncthreads();
+  int lane_id = g.thread_rank();
+  T grad_sum = betta_buffer[threadIdx.y][threadIdx.x];
+  T grad_xhat_product_sum = gamma_buffer[threadIdx.y][threadIdx.x];
+
+  for (int offset = g.size()/2; offset > 0; offset/=2)
+  {
+    grad_sum += g.shfl_down(grad_sum, offset);
+    grad_xhat_product_sum += g.shfl_down(grad_xhat_product_sum, offset);
+  }
+  if (lane_id == 0 && col < width)
+  {
+    betta_grad[col] = grad_sum;
+    gamma_grad[col] = grad_xhat_product_sum;
+  }
+
 }
 
 /**
