@@ -321,11 +321,11 @@ class DecoderLM(Module):
         token_embeddings = self.token_embeddings(idx)
 
         x = position_embeddings + token_embeddings
-        x = self.dropout(x)
-        x = self.t_layer_1(x)
-        x = self.t_layer_2(x)
-        x = self.t_layer_3(x)
-        x = self.t_layer_4(x)
+        self.dropout_res = self.dropout(x)
+        self.layer1_res = self.t_layer_1(self.dropout_res)
+        self.layer2_res = self.t_layer_2(self.layer1_res)
+        self.layer3_res = self.t_layer_3(self.layer2_res)
+        self.layer4_res = self.t_layer_4(self.layer3_res)
         x_norm = self.ln(x.view(batch_size*seq_len, self.n_embd))
         x_norm = self.lm_head(x_norm)
         x_norm = x_norm.view(batch_size, seq_len, self.n_vocab)
