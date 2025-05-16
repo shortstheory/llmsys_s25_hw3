@@ -459,12 +459,46 @@ class CudaKernelOps(TensorOps):
         hidden_dim,
         stream
       ) 
-      return out
+      return out,vars,means
       #   END ASSIGN3_2
       
     @staticmethod
     def layernorm_bw(out_grad: Tensor, inp: Tensor, gamma: Tensor, beta: Tensor, var: Tensor, mean: Tensor):
-      #   BEGIN ASSIGN3_2
-      raise("Not implemented")
-      #   END ASSIGN3_2
+      batch_size, hidden_dim = inp.shape
+      stream = torch.cuda.current_stream().cuda_stream
+      lib_layernorm.launch_layernorm_bw.argtypes = [
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # gamma_grad
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # betta_grad
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # inp_grad
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # out_grad
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # inp
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # gamma
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # betta
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # vars
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'), # means
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p
+      ]
+      gamma_grad = tensor_from_numpy(np.zeros((hidden_dim)), backend=inp.backend, requires_grad=True)
+      betta_grad = tensor_from_numpy(np.zeros((hidden_dim)), backend=inp.backend, requires_grad=True)
+      inp_grad = tensor_from_numpy(np.zeros((batch_size,hidden_dim)), backend=inp.backend, requires_grad=True)
+      lib_layernorm.launch_layernorm_bw.restype = None
+      lib_layernorm.launch_layernorm_bw(
+        gamma_grad._tensor._storage,
+        betta_grad._tensor._storage,
+        inp_grad._tensor._storage,
+        out_grad._tensor._storage,
+        inp._tensor._storage,
+        gamma._tensor._storage,
+        beta._tensor._storage,
+        var._tensor._storage,
+        mean._tensor._storage,
+        batch_size,
+        hidden_dim,
+        stream,
+        stream
+      ) 
+      return inp_grad,gamma_grad,betta_grad
       
