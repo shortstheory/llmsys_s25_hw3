@@ -226,9 +226,9 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
 
   if (col < width)
   {
-    for (int i = 0; i < rows; i+=blockDim.y)
+    for (int i = threadIdx.y; i < rows; i+=blockDim.y)
     {
-      int row = i + threadIdx.y;
+      int row = i;
       int idx = row*width + col;  
       T grad = out_grad[idx];
       T xhat = 0.0;
@@ -238,6 +238,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
         const T gamma_val = gamma[col];
         const T beta_val = betta[col];
         xhat = (input_or_output-beta_val)/gamma_val;
+        // printf("betta threadIdx.x %d threadIdx.y %d grad %f xhat %f\n", threadIdx.x, threadIdx.y, grad, xhat);
       } else if (use_mean_var)
       {
         const T mean = means[row];
@@ -248,6 +249,8 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
       thread_grad_xhat_product_sum += grad*xhat;
     }
   }
+  // if (threadIdx.y < rows && col < width && blockIdx.x == 0)
+  //   printf("%d %d %f\n", threadIdx.x, threadIdx.y, thread_grad_sum);
 
   betta_buffer[threadIdx.x][threadIdx.y] = thread_grad_sum;
   gamma_buffer[threadIdx.x][threadIdx.y] = thread_grad_xhat_product_sum;
@@ -255,7 +258,6 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   int lane_id = g.thread_rank();
   T grad_sum = betta_buffer[threadIdx.y][threadIdx.x];
   T grad_xhat_product_sum = gamma_buffer[threadIdx.y][threadIdx.x];
-  // printf("threadIdx.x %d threadIdx.y %d grad %f grad_xhat %f\n", threadIdx.x, threadIdx.y, grad_sum, grad_xhat_product_sum);
 
   for (int offset = g.size()/2; offset > 0; offset/=2)
   {

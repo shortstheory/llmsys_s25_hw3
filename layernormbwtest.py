@@ -8,16 +8,17 @@ import numpy as np
 
 # %%
 # %%
-rows = 10
-hidden_dim = 8
+rows = 500
+hidden_dim = 128
 
 def rand(shape):
     return np.random.rand(*shape)
 
 inp = rand((rows, hidden_dim))
 out_grad = rand((rows,hidden_dim))
-gamma = rand((rows,1))
-beta = rand((rows,1))
+# out_grad = np.ones((rows,hidden_dim))
+gamma = rand((hidden_dim,))
+beta = rand((hidden_dim,))
 
 
 def custom():
@@ -66,8 +67,7 @@ dinp, f_gamma_grad, f_betta_grad = baseline()
 
 # %%
 # beta_mt
-print(f_gamma_grad)
-print(f_betta_grad)
+print((beta_mt.to_numpy()-f_betta_grad.to_numpy()).max())
 
 # %%
 # f_betta_grad
