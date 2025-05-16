@@ -20,7 +20,7 @@ datatype = np.float32
 
 
 class MultiHeadAttention(Module):
-    def __init__(self, n_embd: int, n_head: int, causal: bool=True, p_dropout: float=0.1, bias: bool=True, backend: TensorBackend=None):
+    def __init__(self, n_embd: int, n_head: int, causal: bool=True, p_dropout: float=0.1, bias: bool=True, backend: TensorBackend=None,use_fused_kernel=False):
         super().__init__()
         """Implements Multi-Head Attention as described in "Attention Is All You Need"
 
@@ -50,6 +50,7 @@ class MultiHeadAttention(Module):
         self.v_projection    =   Linear(self.n_embd, self.n_embd, bias, backend)
         self.out_projection = Linear(self.n_embd, self.n_embd, bias, backend)
         self.dropout = p_dropout
+        self.use_fused_kernel = use_fused_kernel
         ### END YOUR SOLUTION
 
     def create_causal_mask(self, seq_len):
@@ -109,18 +110,24 @@ class MultiHeadAttention(Module):
         _, _, _, v_dim = v.shape
         assert q_dim == k_dim == v_dim
         result = None
-        mask = self.create_causal_mask(queries_len)
         ### BEGIN YOUR SOLUTION
         result = q@kT/(self.attn_hidden_dim**0.5)
-        if self.causal:
-            result = result+ mask
         # result = result - max(result,dim=3)
         # q@kT gives me scores for the affinity of each token with the others
         # b x heads x seq_len x seq_len
         # for each token we want to find the one with highest affinity using masked softmax
         # returns 0-1 prob for each value in the input
-        result = softmax(result,dim=3)
-        result = result @ v
+        if (self.use_fused_kernel):
+            # default has no masking, so all zeroes
+            mask = tensor_from_numpy(-np.finfo(datatype).max * np.zeros((batch_size, num_head, queries_len, queries_len), dtype=datatype), backend = self.backend)
+            if self.causal:
+                mask = self.create_causal_mask(queries_len)
+            result = result.attn_softmax(mask) @ v
+        # old solution from hw 2
+        else:
+            if self.causal:
+                result += self.create_causal_mask(queries_len)
+            result = softmax(result, 3) @ v
         # result shape b x num_heads x seq_len x attn_hidden_dim
         ### END YOUR SOLUTION
         result = result.permute(0,2,1,3).contiguous()
@@ -188,7 +195,7 @@ class FeedForward(Module):
     
 
 class TransformerLayer(Module):
-    def __init__(self, n_embd: int, n_head: int, p_dropout: float=0.1, ln_eps: float=1e-5, bias: bool=True, backend: TensorBackend=None):
+    def __init__(self, n_embd: int, n_head: int, p_dropout: float=0.1, ln_eps: float=1e-5, bias: bool=True, backend: TensorBackend=None,use_fused_kernel=False):
         super().__init__()
         """A Transformer Layer in a Pre-LN Transformer.
 
@@ -206,9 +213,9 @@ class TransformerLayer(Module):
             ff : FeedForward layer
         """
         ### BEGIN YOUR SOLUTION
-        self.ln_1 = LayerNorm1d(n_embd, ln_eps, backend)
-        self.ln_2 = LayerNorm1d(n_embd, ln_eps, backend)
-        self.attention = MultiHeadAttention(n_embd, n_head, True, p_dropout, bias, backend)
+        self.ln_1 = LayerNorm1d(n_embd, ln_eps, backend,use_fused_kernel)
+        self.ln_2 = LayerNorm1d(n_embd, ln_eps, backend,use_fused_kernel)
+        self.attention = MultiHeadAttention(n_embd, n_head, True, p_dropout, bias, backend,use_fused_kernel)
         self.ff = FeedForward(n_embd, 256, p_dropout, bias, backend)
         ### END YOUR SOLUTION
 
@@ -277,12 +284,12 @@ class DecoderLM(Module):
         ### BEGIN YOUR SOLUTION
         self.token_embeddings    = Embedding(n_vocab, n_embd, backend)
         self.position_embeddings = Embedding(n_positions, n_embd, backend)
-        self.t_layer_1           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend)
-        self.t_layer_2           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend)
-        self.t_layer_3           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend)
-        self.t_layer_4           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend)
+        self.t_layer_1           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend,use_fused_kernel)
+        self.t_layer_2           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend,use_fused_kernel)
+        self.t_layer_3           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend,use_fused_kernel)
+        self.t_layer_4           = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend,use_fused_kernel)
         self.dropout             = Dropout(p_dropout)
-        self.ln                  = LayerNorm1d(n_embd, ln_eps, backend)
+        self.ln                  = LayerNorm1d(n_embd, ln_eps, backend,use_fused_kernel)
         self.lm_head             = Linear(n_embd, n_vocab, bias, backend)
         ### END YOUR SOLUTION
     

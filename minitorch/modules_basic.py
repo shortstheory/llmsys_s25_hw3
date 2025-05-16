@@ -121,7 +121,7 @@ class Linear(Module):
 
 
 class LayerNorm1d(Module):
-    def __init__(self, dim: int, eps: float, backend: TensorBackend):
+    def __init__(self, dim: int, eps: float, backend: TensorBackend,use_fused_kernel=False):
         super().__init__()
         """Applies Layer Normalization over a mini-batch of 1-dimensional inputs.
         
@@ -139,6 +139,7 @@ class LayerNorm1d(Module):
         ### END YOUR SOLUTION
         self.weights = Parameter( tensor_from_numpy( np.ones(self.dim), backend, True ))
         self.bias = Parameter(tensor_from_numpy( np.zeros(self.dim), backend, True ))
+        self.use_fused_kernel = False
 
     def forward(self, x: Tensor) -> Tensor:
         """Applies Layer Normalization over a mini-batch of inputs. 
@@ -151,11 +152,14 @@ class LayerNorm1d(Module):
         Output: 
             output - Tensor of shape (bs, dim)
         """
-        batch, dim = x.shape
-        w = self.weights.value.view(self.dim,1)
-        var_sqrt = (x.var(1)+self.eps)**0.5
-        num = (x - x.mean(1))*self.weights.value
-        y = num/var_sqrt+self.bias.value
-        return y
+        if self.use_fused_kernel:
+            return x.layernorm(self.weights.value, self.bias.value)
+        else:
+            batch, dim = x.shape
+            w = self.weights.value.view(self.dim,1)
+            var_sqrt = (x.var(1)+self.eps)**0.5
+            num = (x - x.mean(1))*self.weights.value
+            y = num/var_sqrt+self.bias.value
+            return y
         ### BEGIN YOUR SOLUTION
         ### END YOUR SOLUTION
