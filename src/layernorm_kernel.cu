@@ -330,38 +330,61 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   float4* inp_grad4_ptr =       reinterpret_cast<float4*>(inp_grad)+offset;
   
 
-  float4 input_or_output4 = inp4_ptr[col];
-  float4 gamma4 = gamma4_ptr[col];
   float4 xhat;
+  float4 input_or_output4;
+  float4 gamma4;
+  float4 dxhat4;
 
-  if (means)
+  xhat.x = 0.0;
+  xhat.y = 0.0;
+  xhat.z = 0.0;
+  xhat.w = 0.0;
+  input_or_output4.x = 0.0;
+  input_or_output4.y = 0.0;
+  input_or_output4.z = 0.0;
+  input_or_output4.w = 0.0;
+  gamma4.x = 0.0;
+  gamma4.y = 0.0;
+  gamma4.z = 0.0;
+  gamma4.w = 0.0;
+  dxhat4.x = 0.0;
+  dxhat4.y = 0.0;
+  dxhat4.z = 0.0;
+  dxhat4.w = 0.0;
+
+
+  if (col < hidden_dim)
   {
-    float mean = means[row];
-    float var_rsqrt = rsqrt(vars[row]);
-    xhat.x = (input_or_output4.x - mean)*var_rsqrt;
-    xhat.y = (input_or_output4.y - mean)*var_rsqrt;
-    xhat.z = (input_or_output4.z - mean)*var_rsqrt;
-    xhat.w = (input_or_output4.w - mean)*var_rsqrt;
-  } else if (betta4_ptr)
-  {
-    float4 betta4 = betta4_ptr[col];
+    float4 input_or_output4 = inp4_ptr[col];
     float4 gamma4 = gamma4_ptr[col];
-    xhat.x = (input_or_output4.x - betta4.x)/gamma4.x;
-    xhat.y = (input_or_output4.y - betta4.y)/gamma4.y;
-    xhat.z = (input_or_output4.z - betta4.z)/gamma4.z;
-    xhat.w = (input_or_output4.w - betta4.w)/gamma4.w;
+    if (betta4_ptr)
+    {
+      float4 betta4 = betta4_ptr[col];
+      xhat.x = (input_or_output4.x - betta4.x)/gamma4.x;
+      xhat.y = (input_or_output4.y - betta4.y)/gamma4.y;
+      xhat.z = (input_or_output4.z - betta4.z)/gamma4.z;
+      xhat.w = (input_or_output4.w - betta4.w)/gamma4.w;
+      // printf("betta threadIdx.x %d %f %f %f %f\n", threadIdx.x, xhat.x, xhat.y, xhat.z, xhat.w);
+    } else if (means)
+    {
+      float mean = means[row];
+      float var_rsqrt = rsqrt(vars[row]);
+      xhat.x = (input_or_output4.x - mean)*var_rsqrt;
+      xhat.y = (input_or_output4.y - mean)*var_rsqrt;
+      xhat.z = (input_or_output4.z - mean)*var_rsqrt;
+      xhat.w = (input_or_output4.w - mean)*var_rsqrt;
+    }
+    float4 out_grad4 = out_grad4_ptr[col];
+
+    dxhat4.x = out_grad4.x*gamma4.x;
+    dxhat4.y = out_grad4.y*gamma4.y;
+    dxhat4.z = out_grad4.z*gamma4.z;
+    dxhat4.w = out_grad4.w*gamma4.w;
   }
 
-  float4 out_grad4 = out_grad4_ptr[col];
 
-  float4 dxhat;
-  dxhat.x = out_grad4.x*gamma4.x;
-  dxhat.y = out_grad4.y*gamma4.y;
-  dxhat.z = out_grad4.z*gamma4.z;
-  dxhat.w = out_grad4.w*gamma4.w;
-
-  float dxhat_sum = dxhat.x + dxhat.y + dxhat.z + dxhat.w;
-  float dxhat_xhat_sum = dxhat.x*xhat.x + dxhat.y*xhat.y + dxhat.z*xhat.z + dxhat.w*xhat.w;
+  float dxhat_sum = dxhat4.x + dxhat4.y + dxhat4.z + dxhat4.w;
+  float dxhat_xhat_sum = dxhat4.x*xhat.x + dxhat4.y*xhat.y + dxhat4.z*xhat.z + dxhat4.w*xhat.w;
 
   // Step 2
   blockReduce<ReduceType::kSum,1>(&dxhat_sum);
@@ -377,13 +400,16 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
     svariance_inv = rsqrt(vars[row]);
   }
   __syncthreads();
- float4 res;
-  res.x = (dxhat.x - (sdxhat_sum + xhat.x*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
-  res.y = (dxhat.y - (sdxhat_sum + xhat.y*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
-  res.z = (dxhat.z - (sdxhat_sum + xhat.z*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
-  res.w = (dxhat.w - (sdxhat_sum + xhat.w*sdxhat_xhat_sum)/hidden_dim)*svariance_inv;
-
-  inp_grad4_ptr[col]=res;
+  float4 res;
+  const float real_hidden_dim = hidden_dim*4;
+  res.x = (dxhat4.x - (sdxhat_sum + xhat.x*sdxhat_xhat_sum)/real_hidden_dim)*svariance_inv;
+  res.y = (dxhat4.y - (sdxhat_sum + xhat.y*sdxhat_xhat_sum)/real_hidden_dim)*svariance_inv;
+  res.z = (dxhat4.z - (sdxhat_sum + xhat.z*sdxhat_xhat_sum)/real_hidden_dim)*svariance_inv;
+  res.w = (dxhat4.w - (sdxhat_sum + xhat.w*sdxhat_xhat_sum)/real_hidden_dim)*svariance_inv;
+  if (col < hidden_dim)
+  {
+    inp_grad4_ptr[col]=res;
+  }
 }
 extern "C" {
 void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
