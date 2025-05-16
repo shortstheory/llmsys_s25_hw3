@@ -45,8 +45,8 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   // 3. Compute layernorm result with reinterpret_cast by casting to float4 for speedup
   
   // Step 1
-  float l_sum = 0;
-  float l2_sum = 0;
+  float l_sum = 0.0;
+  float l2_sum = 0.0;
   int offset = blockIdx.x * hidden_size; 
   const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + offset;  
   float4 *ln_resf4= reinterpret_cast< float4 *>(ln_res) + offset;  
@@ -57,10 +57,14 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
     l_sum += val.x + val.y + val.z + val.w;
     l2_sum += val.x*val.x + val.y*val.y + val.z*val.z + val.w*val.w;
   }
+  // printf("threadIdx.x %d l_sum %f l2_sum %f\n", threadIdx.x, l_sum, l2_sum);
   // each thread loading 4 values here, so should it be hidden_size/4?
   // Step 2
   blockReduce<ReduceType::kSum, 1>(&l_sum);
+  __syncthreads();
+
   blockReduce<ReduceType::kSum, 1>(&l2_sum);
+  __syncthreads();
   __shared__ float s_var;
   __shared__ float s_mean;
   if (threadIdx.x == 0)
@@ -69,6 +73,8 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
     s_mean = l_sum / real_hidden_dim;
     float l2_sum_mean = l2_sum / real_hidden_dim;
     s_var = l2_sum_mean - s_mean * s_mean + LN_EPSILON;
+    // printf("lsum - %f l2sum - %f Svar - %f Smean %f l2summean\n", l_sum, l2_sum, s_var, s_mean, l2_sum_mean);
+
     if (means != nullptr)
     {
       means[blockIdx.x] = s_mean;

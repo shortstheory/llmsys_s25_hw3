@@ -212,6 +212,8 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
 
         optimizer.step()
         t3 = time.time()
+        print(i)
+        print(loss)
 
         # print(f"Forward: {t1 - t0}")
         # print(f"Backward: {t2 - t1}")
@@ -261,7 +263,7 @@ def main(dataset_name='iwslt14-de-en-preprocess',
         'p_dropout'   : 0.1,  # x_pdrop
         'ln_eps'      : 1e-5, # layer_norm_epsilon
         'backend'     : backend,
-        'use_fused_kernel': args.use_fused_kernel
+        'use_fused_kernel': True
     }
 
     model = DecoderLM(**config)

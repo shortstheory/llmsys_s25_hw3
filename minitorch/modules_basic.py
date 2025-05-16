@@ -153,8 +153,19 @@ class LayerNorm1d(Module):
             output - Tensor of shape (bs, dim)
         """
         if self.use_fused_kernel:
-            res = x.layernorm(self.weights.value, self.bias.value)
-            return res
+            fused_res = x.layernorm(self.weights.value, self.bias.value)
+
+            # batch, dim = x.shape
+            # w = self.weights.value.view(self.dim,1)
+            # var_sqrt = (x.var(1)+self.eps)**0.5
+            # num = (x - x.mean(1))*self.weights.value
+            # y = num/var_sqrt+self.bias.value
+            # self.delta = (y-fused_res).to_numpy()
+            # deltasum = np.abs(self.delta).sum()
+            # print("Delta")
+            # print(deltasum)
+
+            return fused_res
         else:
             batch, dim = x.shape
             w = self.weights.value.view(self.dim,1)
