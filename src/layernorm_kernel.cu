@@ -255,16 +255,19 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   int lane_id = g.thread_rank();
   T grad_sum = betta_buffer[threadIdx.y][threadIdx.x];
   T grad_xhat_product_sum = gamma_buffer[threadIdx.y][threadIdx.x];
+  // printf("threadIdx.x %d threadIdx.y %d grad %f grad_xhat %f\n", threadIdx.x, threadIdx.y, grad_sum, grad_xhat_product_sum);
 
   for (int offset = g.size()/2; offset > 0; offset/=2)
   {
     grad_sum += g.shfl_down(grad_sum, offset);
     grad_xhat_product_sum += g.shfl_down(grad_xhat_product_sum, offset);
   }
-  if (lane_id == 0 && col < width)
+  int dest = blockDim.x * blockIdx.x + threadIdx.y;
+  if (lane_id == 0 && dest < width)
   {
-    betta_grad[col] = grad_sum;
-    gamma_grad[col] = grad_xhat_product_sum;
+    betta_grad[dest] = grad_sum;
+    gamma_grad[dest] = grad_xhat_product_sum;
+    // printf("betta_grad %f gamma_grad %f dest %d\n", betta_grad[dest], gamma_grad[dest], dest);
   }
 
 }
